@@ -53,6 +53,73 @@ export const createPlayer = async(req, res) =>{
     }
 }
 
+export const reactivatePlayer = async(req, res) =>{
+    try {
+        const {playerId} = req.body;
+
+        const player = await Player.findById(playerId);
+        const highestRankedPlayer = await Player.findOne({active: true})
+            .sort({ranking: -1})
+            .select("ranking");
+
+    
+    if (!player) return res.status(400).json({error: "Jugador no encontrado"});
+
+    const newRank =  highestRankedPlayer && highestRankedPlayer.ranking
+        ? highestRankedPlayer.ranking + 1
+        : 1;
+
+
+    player.active = true;
+    player.ranking = newRank
+
+    await player.save();
+
+    return res.status(201).json({
+        message: `${player.name} ${player.lastName} has been reactivated`,
+        active: true,
+        ranking: newRank
+    })
+
+    } catch (error) {
+        console.log(error)
+        res.status(500)
+    }
+}
+
+
+
+export const deactivePlayer = async(req, res) =>{
+    try {
+
+        const {playerId} = req.body;
+
+        const player = await Player.findById(playerId);
+
+        if (!player) return res.status(400).json({error: "Jugador no encontrado"});
+
+        player.active = false;
+        player.ranking = null;
+
+        await player.save();
+
+        res.status(201).json({
+            message: `${player.name} ${player.lastName} has been removed from the ranking`,
+            active: player.active,
+            ranking: player.ranking
+
+        });     
+
+
+        
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({error: "Error interno desactivando jugador"})
+    }
+}
+
+
+
 // export const generateFirstRound = async(req, res) =>{
     
 //     try{
