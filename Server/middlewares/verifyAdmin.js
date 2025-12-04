@@ -13,7 +13,7 @@ export const verifyAdmin = async(req, res, next) =>{
             return res.status(401).json({error: 'Not authorized, admin required'})
         }
         
-       const admin = await Admin.findById(decoded.id)
+       const admin = await Admin.findById(decoded.id).select("-password") 
 
        if(!admin){
         return res.status(404).json({error: "Admin not found"})
@@ -34,4 +34,21 @@ export const verifyAdmin = async(req, res, next) =>{
     console.error("Unexpected error verifying admin:", error);
     res.status(500).json({ error: "Internal error verifying admin" });
     }
+}
+
+
+export const verifyPlayer = async(req, res, next) =>{
+  const token = req.header("Authorization")?.split(" ")[1]
+
+  if(!token) return res.status(401).json({error: 'Not authorized, no token provided'})
+
+  try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+      req.user = decoded;      
+      next()
+  } catch (error) {
+    console.log(error)
+    res.status(500).json({error: 'Internal server error verifying player'})
+  }
 }

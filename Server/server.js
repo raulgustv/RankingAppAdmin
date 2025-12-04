@@ -1,10 +1,13 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
+import morgan from 'morgan';
 import connectDB from './config/db.js';
 import adminRoutes from './routes/adminRoutes.js'
 import playerRoutes from './routes/playerRoutes.js'
 import matchRoutes from './routes/matchRoute.js'
+import penaltyRoutes from './routes/penaltyRoute.js'
+
 
 
 // Load environment variables from .env file
@@ -14,6 +17,7 @@ const app = express();
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(morgan("dev"))
 
 //db
 connectDB();
@@ -22,6 +26,7 @@ connectDB();
 app.use('/api/admin', adminRoutes);
 app.use('/api/ranking', playerRoutes)
 app.use('/api/match', matchRoutes)
+app.use('/api/penalty', penaltyRoutes)
 
 //Port 
 const PORT = process.env.PORT || 5000;

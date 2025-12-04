@@ -1,6 +1,9 @@
 import Player from "../models/player.js";
 import Round from "../models/round.js";
-
+import bcrypt from 'bcrypt'
+import crypto from 'crypto'
+import jwt from "jsonwebtoken";
+import Match from "../models/match.js";
 
 export const createPlayer = async(req, res) =>{
     try {
@@ -20,17 +23,29 @@ export const createPlayer = async(req, res) =>{
             const highestRank = await Player.findOne().sort({ranking: -1});
             newRank = highestRank ? highestRank.ranking + 1 : 1
         }
+
+        const joinedRound = latestRound ? latestRound.roundNumber + 1 : 1;
+
+        const rawPass = crypto.randomBytes(6).toString("base64").replace(/\+/g, "0").slice(0, 10);
+
+        //hash
+        const saltRounds = 10
+        const hashed  = await bcrypt.hash(rawPass, saltRounds)
         
         const player = new Player({
             name,
             lastName,
             email,
+            password: hashed,
             age,
             gender,
             contactNumber,
             utrLevel,
             internalLevel: utrLevel,
             ranking: newRank,
+            joinedRound,
+            role: "Player",
+            tempPassword: rawPass, //esto se tiene que borrar 
             createdBy: req.admin?._id || null
         });
 
@@ -39,10 +54,9 @@ export const createPlayer = async(req, res) =>{
 
         res.status(201).json({
             message: 'Player successfully created',
-            player
+            player,
+            rawPass
         });
-
-        await player.save();
 
 
     } catch (error) {
@@ -53,70 +67,134 @@ export const createPlayer = async(req, res) =>{
     }
 }
 
-export const reactivatePlayer = async(req, res) =>{
+export const loginPlayer = async(req, res) =>{
     try {
-        const {playerId} = req.body;
 
-        const player = await Player.findById(playerId);
-        const highestRankedPlayer = await Player.findOne({active: true})
-            .sort({ranking: -1})
-            .select("ranking");
+        const {email, password} = req.body;
 
-    
-    if (!player) return res.status(400).json({error: "Jugador no encontrado"});
+        if(!email || !password) return res.status(400).json({error: 'Debe introducir un email y password válidos'})
 
-    const newRank =  highestRankedPlayer && highestRankedPlayer.ranking
-        ? highestRankedPlayer.ranking + 1
-        : 1;
+        const player = await Player.findOne({email});
+
+        if(!player) return res.status(400).json({error: 'No existe un  email asociado a este usuario'})
+        if(!player.active) return res.status(400).json({error: 'Este usuario ha sido desactivado por el administrador'})
+        
+        const valid = await bcrypt.compare(password, player.password)
+        if(!valid) return res.status(401).json({error: 'Email o contraseña no son válidos'})
+
+        //generar token
+        const token = jwt.sign({
+            id: player._id,
+            name: player.name,
+            email: player.email,
+            isAdmin: false
+        }, 
+            process.env.JWT_SECRET,
+            {expiresIn: '7d'}
+        );
+
+        res.status(200).json({
+            message: `Login successfull. Welcome ${player.name}`,
+            token,
+            firstLogin: player.firstLogin,
+            id: player._id,
+            name: player.name
+        });        
 
 
-    player.active = true;
-    player.ranking = newRank
-
-    await player.save();
-
-    return res.status(201).json({
-        message: `${player.name} ${player.lastName} has been reactivated`,
-        active: true,
-        ranking: newRank
-    })
-
+        
+        
     } catch (error) {
         console.log(error)
-        res.status(500)
+        res.status(500).json({error: 'Error iniciando sesión'})
     }
 }
 
-
-
-export const deactivePlayer = async(req, res) =>{
+export const playerProfile = async(req, res) =>{
     try {
 
-        const {playerId} = req.body;
+        const user = req.user;
 
-        const player = await Player.findById(playerId);
+        if(!user) return res.status(401).json({error: 'No se puede leer el perfil de usuario'})
 
-        if (!player) return res.status(400).json({error: "Jugador no encontrado"});
+        const player = await Player.findOne({email: user.email})
+        const matches = await Match.find({
+            $or: [{player1: player._id}, {player2: player._id}]
+        })
+            .populate("player1", "name lastName")
+            .populate("player2", "name lastname")
+            .populate("winner", "name lastname")
+            .sort({createdAt: -1})
+            .lean()
 
-        player.active = false;
-        player.ranking = null;
+        const matchesFinal = matches.map((m) =>({
+            player1:{
+                name: m.player1.name,
+                lastname: m.player1.lastName,
+            },
+            player2:{
+                name: m.player1.name,
+                lastname: m.player1.lastName,
+            },
+             winner:{
+                name: m.winner.name,
+                lastname: m.winner.lastName,
+            },
+            sets: m.sets
+            
+        }))
 
-        await player.save();
-
-        res.status(201).json({
-            message: `${player.name} ${player.lastName} has been removed from the ranking`,
-            active: player.active,
-            ranking: player.ranking
-
-        });     
-
+        res.status(200).json({
+            name: player.name,
+            lastName: player.lastName,
+            email: player.email,
+            ranking: player.ranking,
+            level: player.internalLevel,
+            contactNumber: player.contactNumber,
+            history: player.adjustmentHistory, 
+            matchesFinal 
+        });
 
         
     } catch (error) {
         console.log(error)
-        res.status(500).json({error: "Error interno desactivando jugador"})
+        return res.status(500).json({error: 'Error leyendo perfile de usuario'})
     }
 }
+
+export const updatePassword = async(req, res) =>{
+    try {
+
+        const user = req.user;
+        const {password} = req.body; 
+
+        if(!password) return res.status(400).json({error: 'Se requiere una contraseña'});        
+
+        const player = await Player.findById(user.id)
+        if(!player) return res.status(400).json({error: 'Usuario no encontrado'});        
+
+        const hashed = await bcrypt.hash(password, 10);
+
+        player.password = hashed;
+        player.tempPassword = null;
+        player.firstLogin = false;
+
+        await player.save();
+
+        return res.status(200).json({
+            message: 'Contraseña actualizada',
+            name: player.name,
+            lastName: player.lastName,
+            firstLogin: player.firstLogin
+        });
+        
+    } catch (error) {
+        console.log(error)
+        return res.status(500).json({error: 'Internal error updating password'})
+    }
+}
+
+
 
 
 

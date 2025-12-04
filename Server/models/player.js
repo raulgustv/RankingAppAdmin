@@ -11,7 +11,12 @@ const playerSchema = new mongoose.Schema({
     },
     email: {
         type: String,
-        required: true
+        required: true,
+        unique: true
+    },
+    password:{
+        type: String,
+        required: false
     },
     age: {
         type: Number,
@@ -46,6 +51,7 @@ const playerSchema = new mongoose.Schema({
             round: Number,
             change: Number,
             reason: String,
+            currentRank: Number,
             date: {type: Date, default: Date.now}
         }
     ],
@@ -62,9 +68,36 @@ const playerSchema = new mongoose.Schema({
         type: Number,
         default: null
     },
+    level:{
+        type: String,
+        enum: ['Admin', 'Player'],
+        default: 'Player',
+        required: true
+    },
     joinedRound: {
         type: Number,
         default: 1
+    },
+    /* Esto se tiene que borrar ya en prod */
+    tempPassword: {
+        type: String,
+    },
+    suspended: {
+        type: Boolean,
+        default: false
+    }, 
+    suspendedNotes: {
+        type: [
+             {
+                message: {type: String, required: true},
+                level: {type: Number, required: true},
+                date: {type: Date, default: Date.now}
+            },
+        ], default: []
+    },
+    firstLogin: {
+        type: Boolean,
+        default: true
     }
 }, {timestamps: true})
 

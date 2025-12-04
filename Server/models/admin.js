@@ -21,7 +21,7 @@ const adminSchema = mongoose.Schema({
     },
     level: {
         type: String,
-        enum: ['Admin', 'User'],
+        enum: ['Admin', 'Player'],
         default: 'Admin',
         required: true
     }

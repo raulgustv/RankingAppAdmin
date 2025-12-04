@@ -3,7 +3,6 @@ import Match from "../models/match.js";
 import Round from "../models/round.js";
 
 
-
 export const generateFirstRound = async (req, res) =>{
     try {
 
@@ -109,8 +108,8 @@ export const generateFirstRound = async (req, res) =>{
             winners: []
         })
 
-        res.status(201).json({
-            message:'Ronda #1 generada correctamente',
+        res.status(200).json({
+            message:'Round #1 generated correctly',
             startDate: nextMonday,
             endDate: endDate,
             totalPlayers: players.length,
@@ -121,293 +120,489 @@ export const generateFirstRound = async (req, res) =>{
 
     } catch (error) {
         console.log(error)
-        res.status(500).json({error: 'Error obteniendo jugadores'})
+        res.status(500).json({error: 'Error generando primera ronda'})
     }
 }
 
-export const recordMatchResult = async(req, res) =>{
+export const recordMatchResult = async (req, res) => {
     try {
-        const {matchId, sets} = req.body;
+        const { matchId, sets } = req.body;
 
-        const match  = await Match.findById(matchId).populate("player1 player2");
+        const match = await Match.findById(matchId).populate("player1 player2");
+        if (!match) return res.status(400).json({ error: "Match not found" });
 
-        if(!match) return res.status(400).json({error: "Match not found"})
-        
-        if(match.completed) return res.status(400).json({error: "Match already completed"})
-        
+        if (match.completed)
+            return res.status(400).json({ error: "Match already completed" });
 
-        if(!Array.isArray(sets) || sets.length === 0){
-            return res.status(400).json({error: 'Invalid or missing set scores'})
+        if (!Array.isArray(sets) || sets.length === 0) {
+            return res.status(400).json({ error: "Invalid or missing set scores" });
         }
 
-        match.sets = sets; 
+        match.sets = sets;
 
-        //count sets won
-        let p1SetsWon = 0, p2SetsWon = 0;
-        for (const s of sets){
-            if(s.player1Games > s.player2Games) p1SetsWon++
-            else if (s.player2Games > s.player1Games) p2SetsWon++
+        // Count sets won
+        let p1SetsWon = 0,
+            p2SetsWon = 0;
+        for (const s of sets) {
+            if (s.player1Games > s.player2Games) p1SetsWon++;
+            else if (s.player2Games > s.player1Games) p2SetsWon++;
         }
 
-        if(p1SetsWon === 0 && p2SetsWon === 0){
-            await match.save();
-            return res.status(200).json({message: "Partial results saved"})
-        }
+        if (p1SetsWon === 0 && p2SetsWon === 0)
+            return res
+                .status(200)
+                .json({ message: "Partial results not allowed" });
 
-        let winner;
-        if(p1SetsWon > p2SetsWon) winner = match.player1;
-        else if (p2SetsWon > p1SetsWon) winner = match.player2;
-        else return res.status(400).json({error: "Invalid tie"});
+        let winner =
+            p1SetsWon > p2SetsWon ? match.player1 : match.player2;
+
+        if (p1SetsWon === p2SetsWon)
+            return res.status(400).json({ error: "Invalid tie" });
 
         match.winner = winner._id;
-        match.completed = true
-
+        match.completed = true;
         await match.save();
 
- 
+        // ----------------------------------------------
+        //   OBTAIN WINNER/DISER DOCUMENTS
+        // ----------------------------------------------
 
-        //update ranking after match
-        const loserId = match.player1._id.equals(winner._id) ? match.player2._id : match.player1._id;
+        const loserId = match.player1._id.equals(winner._id)
+            ? match.player2._id
+            : match.player1._id;
+
+        const winnerDoc = await Player.findById(winner._id);
         const loser = await Player.findById(loserId);
-        const winnerDoc = await Player.findById(winner._id)
 
+        const winnerOldRank = winnerDoc.ranking;
+        const loserOldRank = loser.ranking;
 
-        // Const diff
+        // ----------------------------------------------
+        //   RANKING UPDATE — WINNER NEVER DROPS
+        // ----------------------------------------------
 
-        const winnerLevel = Number(winnerDoc.internalLevel || 0)
-        const loserLevel = Number(loser.internalLevel || 0)
-        const diff = winnerLevel-loserLevel;
-        const k = 0.25; //sensibilidad
+        const loserNewRank = loserOldRank + 1;
 
-        //ganador si tenía menos nivel
-        let winnerChange = k * (1-1 / (1 + Math.exp(-diff)));
-        let loserChange = -winnerChange * 0.8;
+        const rankingGap = winnerOldRank - loserOldRank;
 
-        //diferencia era grande y gano el más fuerte
-        if(diff > 1 && winnerDoc.internalLevel > loser.internalLevel){
-            winnerChange *= 0.2;
-            loserChange *= 0.2
+        // Base limit by gap
+        let gapLimit = 1;
+        if (rankingGap >= 10) gapLimit = 3;
+        else if (rankingGap >= 5) gapLimit = 2;
+
+        const JUMP_LIMIT = 2;
+
+        let winnerNewRank = Math.max(
+            winnerOldRank - Math.min(gapLimit, JUMP_LIMIT),
+            1
+        );
+
+        // ⛔ No entrar al top 3 desde abajo (posición >5)
+        if (winnerNewRank < 3 && winnerOldRank > 5) {
+            winnerNewRank = 3;
         }
 
-        //aplicar cambios
+        // ⛔ Si le gana a top 3, no entra directo al podio
+        if (loserOldRank <= 3 && winnerNewRank < 4) {
+            winnerNewRank = 4;
+        }
 
-        winnerDoc.internalLevel = Math.max(0, winnerDoc.internalLevel + winnerChange)
-        loser.internalLevel = Math.max(0, loser.internalLevel + loserChange);
+        // ⚠️ Winner nunca baja
+        winnerNewRank = Math.min(winnerNewRank, winnerOldRank);
 
-        //historial
-        if(!winnerDoc.adjustmentHistory) winnerDoc.adjustmentHistory = [];
-        if(!loser.adjustmentHistory) loser.adjustmentHistory = [];
+        // ----------------------------------------------
+        //   UPDATE OTHER PLAYERS BETWEEN RANKS
+        // ----------------------------------------------
 
-        //winner 
+        await Player.updateMany(
+            {
+                ranking: { $gte: winnerNewRank, $lt: winnerOldRank },
+                _id: { $ne: winnerDoc._id }
+            },
+            { $inc: { ranking: 1 } }
+        );
+
+        winnerDoc.ranking = winnerNewRank;
+        loser.ranking = loserNewRank;
+
+        // ----------------------------------------------
+        // INTERNAL LEVEL (MISMA LÓGICA TUYA)
+        // ----------------------------------------------
+
+        const winnerLevel = Number(winnerDoc.internalLevel || 0);
+        const loserLevel = Number(loser.internalLevel || 0);
+        const diff = winnerLevel - loserLevel;
+        const k = 0.25;
+
+        let winnerChange = k * (1 - 1 / (1 + Math.exp(-diff)));
+        let loserChange = -winnerChange * 0.8;
+
+        if (diff > 1 && winnerDoc.internalLevel > loser.internalLevel) {
+            winnerChange *= 0.2;
+            loserChange *= 0.2;
+        }
+
+        winnerDoc.internalLevel = Math.max(
+            0,
+            winnerDoc.internalLevel + winnerChange
+        );
+        loser.internalLevel = Math.max(
+            0,
+            loser.internalLevel + loserChange
+        );
+
+        if (!winnerDoc.adjustmentHistory)
+            winnerDoc.adjustmentHistory = [];
+        if (!loser.adjustmentHistory)
+            loser.adjustmentHistory = [];
+
         winnerDoc.adjustmentHistory.push({
             roundNumber: match.round,
             change: winnerChange,
-            reason: `Gana contra ${loser.name}`
-        })
+            currentRank: winnerDoc.ranking,
+            reason: `Gana contra ${loser.name}`,
+        });
 
-        //loser
         loser.adjustmentHistory.push({
             roundNumber: match.round,
             change: loserChange,
-            reason: `Pierde contra ${winnerDoc.name}`
-        })
+            currentRank: loser.ranking,
+            reason: `Pierde contra ${winnerDoc.name}`,
+        });
 
         await winnerDoc.save();
         await loser.save();
 
-        //actualizar ronda correspondiente
+        // ----------------------------------------------
+        //   ROUND UPDATE
+        // ----------------------------------------------
+
         await Round.updateOne(
-            {roundNumber: match.round},
-            {$addToSet: {winners: winner._id}}
+            { roundNumber: match.round },
+            {
+                $addToSet: {
+                    winners: winner._id,
+                    players: {
+                        $each: [match.player1._id, match.player2._id],
+                    },
+                },
+            }
         );
 
-        //confirmacion ronda finalizada
-        const matchesInRound = await Match.find({round: match.round});
-        const allCompleted =  matchesInRound.every(m=> m.completed)
+        const matchesInRound = await Match.find({
+            round: match.round,
+        });
+        const allCompleted = matchesInRound.every((m) => m.completed);
 
-        if(allCompleted){
+        if (allCompleted) {
             await Round.updateOne(
-                {roundNumber: match.round},
-                {completed: true}
-            )
-        } 
+                { roundNumber: match.round },
+                { completed: true }
+            );
+        }
+
+        // -------------------------------------------------------
+        // 🔄 FINAL FIX: REGENERAR RANKING GLOBAL SIN DUPLICADOS
+        // -------------------------------------------------------
+
+        const allPlayers = await Player.find().sort({ ranking: 1 });
+
+        for (let i = 0; i < allPlayers.length; i++) {
+            allPlayers[i].ranking = i + 1; // Ranking consecutivo
+            await allPlayers[i].save();
+        }
+
+        // ----------------------------------------------
+        //   RESPONSE
+        // ----------------------------------------------
 
         res.status(201).json({
             message: "Match completed, winner saved and ranking updated",
             matchId: match._id,
             matchRound: match.round,
             winner: `${winnerDoc.name} ${winnerDoc.lastName}`,
-            internalLevelWinner: winnerDoc.internalLevel.toFixed(2), 
-            internalLoserWinner: winnerDoc.internalLevel.toFixed(2),
+            newRankingWinner: winnerDoc.ranking,
+            newRankingLoser: loser.ranking,
             sets,
-            roundsCompleted: allCompleted
-        })
+            roundsCompleted: allCompleted,
+        });
 
     } catch (error) {
         console.log(error);
-        res.status(500).json({error: "Internal error updating match result"})
+        res
+            .status(500)
+            .json({ error: "Internal error updating match result" });
     }
-}
+};
 
-export const generateNextRound = async(req, res) =>{
-   try {
-  // Obtener la última ronda
-  const latestRound = await Round.findOne().sort({ roundNumber: -1 });
+export const generateNextRound = async (req, res) => {
+  try {
+    // ----------------------------------------------
+    // VALIDAR START DATE
+    // ----------------------------------------------
+    const { startDate } = req.body || {};
 
+    if (!startDate)
+      return res.status(400).json({ error: "Start date is required" });
 
-  if (!latestRound)
-    return res.status(400).json({ error: "No existe ronda" });
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
 
-  if (!latestRound.completed)
-    return res.status(400).json({ error: "Ronda anterior no ha sido completada" });
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-   const nextRoundNumber = latestRound.roundNumber + 1;
+    // No puede ser antes de hoy
+    if (start < today)
+      return res
+        .status(400)
+        .json({ error: "Start date must not be earlier than today" });
 
-  // Obtener todos los jugadores activos
-  const returningPlayers = await Player.find({
-    _id: {$in: latestRound.players},
-    active: true 
-   });
+    // Debe ser lunes
+    if (start.getDay() !== 1)
+      return res
+        .status(400)
+        .json({ error: "Start date must be a Monday" });
 
-   const newEligilePlayers = await Player.find({
+    // ----------------------------------------------
+    // OBTENER ÚLTIMA RONDA
+    // ----------------------------------------------
+    const latestRound = await Round.findOne().sort({ roundNumber: -1 });
+
+    if (!latestRound)
+      return res.status(400).json({ error: "Round does not exist" });
+
+    if (!latestRound.completed)
+      return res
+        .status(400)
+        .json({ error: "Last round has not been completed" });
+
+    // startDate NO puede ser antes ni igual a latestRound.endDate
+    const lastEnd = new Date(latestRound.endDate);
+    lastEnd.setHours(0, 0, 0, 0);
+
+    if (start <= lastEnd)
+      return res.status(400).json({
+        error: "Start date must be after the previous round's end date",
+      });
+
+    const nextRoundNumber = latestRound.roundNumber + 1;
+
+    // ----------------------------------------------
+    // JUGADORES ACTIVOS
+    // ----------------------------------------------
+    const returningPlayers = await Player.find({
+      _id: { $in: latestRound.players },
       active: true,
-      joinedRound: {$lte: nextRoundNumber},
-      _id:{$nin: latestRound.players}
-   })
+    });
 
-   const playerMap = new Map();
+    const newEligilePlayers = await Player.find({
+      active: true,
+      joinedRound: { $lte: nextRoundNumber },
+      _id: { $nin: latestRound.players },
+    });
 
-   for(const p of [...returningPlayers, ...newEligilePlayers]){
-      playerMap.set(p._id.toString(), p)
-   }
+    const playerMap = new Map();
 
-   const players = Array.from(playerMap.values())
-
-  if (players.length < 2)
-    return res
-      .status(400)
-      .json({ error: "No hay suficientes jugadores activos para generar una nueva ronda" });
-
-
-    const allActivePlayers = await Player.find({ active: true }).sort({
-    internalLevel: -1,
-  });
-
-  let rank = 1;
-
-  for(const player of allActivePlayers){
-    player.ranking = rank ++
-    await player.save()
-  }
-
-  // Evitar repeticiones
-  const previousMatches = await Match.find({});
-  const previousPairs = new Set(
-    previousMatches
-      .map((m) => [
-        `${m.player1.toString()}-${m.player2.toString()}`,
-        `${m.player2.toString()}-${m.player1.toString()}`,
-      ])
-      .flat()
-  );
-
-  // Calcular fechas de la nueva ronda
-  const lastEndDate = new Date(latestRound.endDate);
-  const nextMonday = new Date(lastEndDate);
-  nextMonday.setDate(
-    lastEndDate.getDate() + ((1 + 7 - lastEndDate.getDay()) % 7 || 7)
-  );
-  nextMonday.setHours(0, 0, 0, 0);
-
-  const nextEndDate = new Date(nextMonday);
-  nextEndDate.setDate(nextMonday.getDate() + 13);
-  nextEndDate.setHours(23, 59, 59, 999);
-
-  // Ordenar jugadores por ranking y UTR
-  const sorted = [...players].sort(
-    (a, b) => a.ranking - b.ranking || b.internalLevel - a.internalLevel
-  );
-
-  const matches = [];
-
-  // Copia de jugadores disponibles
-  let available = [...sorted];
-
-  // Emparejar jugadores hasta que queden menos de 2
-  while (available.length > 1) {
-    const player1 = available.shift();
-
-    // Buscar el mejor match posible (mínima diferencia de UTR, que no hayan jugado)
-    let bestMatchIndex = -1;
-    let bestDiff = Infinity;
-
-    for (let j = 0; j < available.length; j++) {
-      const player2 = available[j];
-      const key1 = `${player1._id}-${player2._id}`;
-      const key2 = `${player2._id}-${player1._id}`;
-      if (previousPairs.has(key1) || previousPairs.has(key2)) continue;
-
-      const levelDiff = Math.abs(player1.internalLevel - player2.internalLevel);
-      if (levelDiff < bestDiff) {
-        bestDiff = levelDiff;
-        bestMatchIndex = j;
-      }
+    for (const p of [...returningPlayers, ...newEligilePlayers]) {
+      playerMap.set(p._id.toString(), p);
     }
 
-    // Si no se encuentra un match nuevo, usar el primero disponible
-    if (bestMatchIndex === -1) bestMatchIndex = 0;
+    const players = Array.from(playerMap.values());
 
-    const player2 = available.splice(bestMatchIndex, 1)[0];
+    if (players.length < 10)
+      return res.status(400).json({
+        error: "There are not enough active players to start new round min(10)",
+      });
 
-    matches.push({
-      round: latestRound.roundNumber + 1,
-      player1: player1._id,
-      player2: player2._id,
-      utrDifference: Math.abs(player1.internalLevel - player2.internalLevel),
-      isBye: false,
+    // ----------------------------------------------
+    // EVITAR REPETICIONES
+    // ----------------------------------------------
+    const previousMatches = await Match.find({});
+    const previousPairs = new Set(
+      previousMatches
+        .map((m) => [
+          `${m.player1.toString()}-${m.player2.toString()}`,
+          `${m.player2.toString()}-${m.player1.toString()}`,
+        ])
+        .flat()
+    );
+
+    const recentMatches = await Match.find({})
+      .sort({ round: -1 })
+      .limit(40);
+
+    const recentPairs = new Set(
+      recentMatches
+        .map((m) => [
+          `${m.player1.toString()}-${m.player2.toString()}`,
+          `${m.player2.toString()}-${m.player1.toString()}`,
+        ])
+        .flat()
+    );
+
+    // ----------------------------------------------
+    // ORDENAR
+    // ----------------------------------------------
+    const sorted = [...players].sort(
+      (a, b) => a.ranking - b.ranking || b.internalLevel - a.internalLevel
+    );
+
+    let available = [...sorted];
+    const matches = [];
+
+    // ----------------------------------------------
+    // EMPAREJAMIENTO
+    // ----------------------------------------------
+    while (available.length > 1) {
+      const player1 = available.shift();
+
+      let bestMatchIndex = -1;
+      let bestDiff = Infinity;
+
+      for (let i = 0; i < available.length; i++) {
+        const p2 = available[i];
+        const k1 = `${player1._id}-${p2._id}`;
+        const k2 = `${p2._id}-${player1._id}`;
+
+        if (!previousPairs.has(k1) && !previousPairs.has(k2)) {
+          const diff = Math.abs(player1.internalLevel - p2.internalLevel);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestMatchIndex = i;
+          }
+        }
+      }
+
+      if (bestMatchIndex === -1) {
+        for (let i = 0; i < available.length; i++) {
+          const p2 = available[i];
+          const k1 = `${player1._id}-${p2._id}`;
+          const k2 = `${p2._id}-${player1._id}`;
+
+          if (!recentPairs.has(k1) && !recentPairs.has(k2)) {
+            const diff = Math.abs(player1.internalLevel - p2.internalLevel);
+            if (diff < bestDiff) {
+              bestDiff = diff;
+              bestMatchIndex = i;
+            }
+          }
+        }
+      }
+
+      if (bestMatchIndex === -1) {
+        let worstDiff = -Infinity;
+
+        for (let i = 0; i < available.length; i++) {
+          const p2 = available[i];
+          const diff = Math.abs(player1.internalLevel - p2.internalLevel);
+
+          if (diff > worstDiff) {
+            worstDiff = diff;
+            bestMatchIndex = i;
+          }
+        }
+      }
+
+      const player2 = available.splice(bestMatchIndex, 1)[0];
+
+      matches.push({
+        round: nextRoundNumber,
+        player1: player1._id,
+        player2: player2._id,
+        utrDifference: Math.abs(player1.internalLevel - player2.internalLevel),
+        isBye: false,
+      });
+    }
+
+    if (available.length === 1) {
+      const lastRemaining = available[0];
+
+      matches.push({
+        round: nextRoundNumber,
+        player1: lastRemaining._id,
+        player2: lastRemaining._id,
+        utrDifference: 0,
+        isBye: true,
+        completed: true,
+        winner: lastRemaining._id,
+      });
+    }
+
+    // ----------------------------------------------
+    // GENERAR END DATE (DOMINGO)
+    // ----------------------------------------------
+    const end = new Date(start);
+    end.setDate(start.getDate() + 14);
+
+    const day = end.getDay(); // 0 = domingo
+
+    if (day !== 0) {
+      end.setDate(end.getDate() + (7 - day));
+    }
+
+    end.setHours(23, 59, 59, 999);
+
+    // ----------------------------------------------
+    // GUARDAR
+    // ----------------------------------------------
+    const savedMatches = await Match.insertMany(matches);
+
+    await Round.create({
+      roundNumber: nextRoundNumber,
+      totalMatches: savedMatches.length,
+      completed: false,
+      winners: [],
+      startDate: start,
+      endDate: end,
     });
-  }
 
-  // Si queda un jugador libre, asignar BYE
-  if (available.length === 1) {
-    const lastRemaining = available[0];
-    console.log(`Jugador asignado como BYE: ${lastRemaining.name}`);
-    matches.push({
-      round: latestRound.roundNumber + 1,
-      player1: lastRemaining._id,
-      player2: lastRemaining._id,
-      utrDifference: 0,
-      isBye: true,
-      completed: true,
-      winner: lastRemaining._id,
+    res.status(201).json({
+      message: `Ronda ${nextRoundNumber} generada correctamente`,
+      totalPlayers: sorted.length,
+      newPlayersAdded: newEligilePlayers.map((p) => p.name),
+      totalMatches: savedMatches.length,
+      matches: savedMatches,
     });
+
+  } catch (error) {
+    console.error("Error al generar siguiente ronda:", error);
+    res.status(500).json({ error: error.message });
   }
+};
 
-  // Guardar los partidos generados
-  const savedMatches = await Match.insertMany(matches);
 
-  // Crear la nueva ronda
-  await Round.create({
-    roundNumber: latestRound.roundNumber + 1,
-    totalMatches: savedMatches.length,
-    completed: false,
-    winners: [],
-    startDate: nextMonday,
-    endDate: nextEndDate,
-  });
+export const currentMatches = async(req, res) =>{
+        try {
 
-  // Respuesta final
-  res.status(201).json({
-    message: `Ronda ${latestRound.roundNumber + 1} generada correctamente`,
-    totalPlayers: sorted.length,
-    newPlayersAdded: newEligilePlayers.map((p) => p.name),
-    totalMatches: savedMatches.length,
-    matches: savedMatches,
-  });
+        const matches = await Match.find({completed: false}).select("")
+            .populate("player1", "name lastName")
+            .populate("player2", "name lastName")
+            .populate("winner", "name lastName")
 
-} catch (error) {
-  console.error("Error al generar siguiente ronda:", error);
-  res.status(500).json({ error: error.message });
+        res.status(200).json({
+            matches
+        })
+        
+    } catch (error) {
+       console.log(error)
+       res.status(500).json({error: "Error leyendo las partidas"}) 
+    }
 }
 
+export const allMatches = async(req, res) =>{
+    try {
+
+        const matches = await Match.find().select("")
+            .populate("player1", "name lastName ranking contactNumber -_id")
+            .populate("player2", "name lastName ranking contactNumber -_id")
+            .populate("winner", "name lastName -_id")
+
+        res.status(200).json({
+            matches
+        })
+        
+    } catch (error) {
+       console.log(error)
+       res.status(500).json({error: "Error leyendo las partidas"}) 
+    }
 }
