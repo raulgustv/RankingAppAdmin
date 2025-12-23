@@ -12,6 +12,8 @@ import ViewPlayers from '../pages/players/ViewPlayers'
 import MatchSummary from '../pages/matches/MatchSummary'
 import MatchesSummary from '../pages/matches/MatchesSummary'
 import RoundsSummary from '../pages/matches/RoundsSummary'
+import AddPenalty from '../pages/penalties/AddPenalty'
+import Suspensions from '../pages/penalties/Suspensions'
 
 const AppRouter = () => {
   return (
@@ -49,6 +51,8 @@ const AppRouter = () => {
           <Route path="match-round-export" element={<MatchSummary />} />
           <Route path="all-matches" element={<MatchesSummary />} />
           <Route path="all-rounds" element={<RoundsSummary />} />
+          <Route path="penalty" element={<AddPenalty />} />
+          <Route path="suspensions" element={<Suspensions />} />
         </Route>
 
         {/* FORBIDDEN */}

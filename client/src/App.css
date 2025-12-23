@@ -36,3 +36,12 @@
     transform: rotate(360deg);
   }
 }
+
+
+/* ANTD PERSONALIZADO */
+.ant-segmented-item-selected {
+  background-color: #1677ff !important; /* color del pill */
+  color: white !important;              /* color del texto */
+  border-color: #1677ff !important;
+}
+

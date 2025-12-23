@@ -42,3 +42,56 @@ export const activatePlayer = async(id) =>{
 
     }
 }
+
+export const addPlayerPenalty = async(idPlayer, penaltyReason, note) =>{
+    try {        
+        
+        const {data} = await axiosInstance.post(`/penalty/add-penalty/${idPlayer}`,{
+            reason: penaltyReason,
+            note: note
+        })
+
+        return data
+        
+    } catch (error) {
+        console.log(error)
+        return {
+            ok: false
+        }
+    }
+}
+
+export const addSuspension = async(idPlayer, suspension) =>{
+    try {        
+        
+        const {data} = await axiosInstance.put(`/penalty/suspend-player/${idPlayer}`,{
+            message: suspension
+        })
+
+        return data
+        
+    } catch (error) {
+        console.log(error)
+        return {
+            ok: false
+        }
+    }
+}
+
+
+
+// export const getPenalty = async() =>{
+//     try {
+//         const {data} = 
+
+//         return{
+//             ok: true,
+//             data
+//         }
+//     } catch (error) {
+//         console.log(error)
+//         return {
+//             ok: false
+//         }
+//     }
+// }

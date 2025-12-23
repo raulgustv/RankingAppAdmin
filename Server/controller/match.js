@@ -592,7 +592,7 @@ export const currentMatches = async(req, res) =>{
 export const allMatches = async(req, res) =>{
     try {
 
-        const matches = await Match.find().select("")
+        const matches = await Match.find().select()
             .populate("player1", "name lastName ranking contactNumber -_id")
             .populate("player2", "name lastName ranking contactNumber -_id")
             .populate("winner", "name lastName -_id")
@@ -606,3 +606,33 @@ export const allMatches = async(req, res) =>{
        res.status(500).json({error: "Error leyendo las partidas"}) 
     }
 }
+
+export const updateRoundEndDate = async(req, res) =>{
+    try {
+
+        const {id} = req.params;
+        const {endDate} = req.body;
+
+        const round = await Round.findOne({_id: id, completed: false})
+
+        if(!endDate) return res.status(400).json({error: "End date is required for updating the round"});
+        if(!round) return res.status(400).json({error: "Round end date not found"});
+        
+        const roundEndDate= new Date(round.endDate);
+        const newEndDate = new Date(endDate);   
+
+        if(newEndDate <= roundEndDate ) return res.status(400).json({error: "End date must be after current round end date"});
+
+        round.endDate = newEndDate;
+
+        await round.save();
+
+        return res.status(200).json(round);
+
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({error: "End date cannot be updated"})
+    }
+}
+
+

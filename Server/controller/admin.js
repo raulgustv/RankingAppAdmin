@@ -173,13 +173,11 @@ export const activePlayers = async(req, res) =>{
     }
 }
 
-
-
 export const allRounds = async(req, res) =>{
 
     try {
 
-        const allRounds = await Round.find().select("-_id")
+        const allRounds = await Round.find().select()
             .populate("players", "name lastName -_id")
             .populate("winners", "name lastName -_id")
 
@@ -206,5 +204,4 @@ export const roundCount = async(req, res) =>{
         })
     }
 }
-
 

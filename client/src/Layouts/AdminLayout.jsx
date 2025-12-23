@@ -5,6 +5,7 @@ import {
   UserOutlined,
   LogoutOutlined,
   FlagOutlined,
+  DislikeOutlined
 } from "@ant-design/icons";
 import Sider from 'antd/es/layout/Sider';
 import { Content } from 'antd/es/layout/layout';
@@ -64,6 +65,23 @@ const sideMenu = [
                 key: "allMatchesSummry",
                 label: "All matches summary",
                 onClick: () => navigate('/admin/all-matches')
+            }
+          ]
+      },
+       {
+          key: 'penalties',
+          icon: <DislikeOutlined />,
+          label: "Penalties",
+          children: [
+            {
+                key: "penaltyPoint",
+                label: "Add Penalty",
+                onClick: () => navigate('/admin/penalty')
+            },
+            {
+                key: "suspension",
+                label: "Suspended players",
+                onClick: () => navigate('/admin/suspensions')
             }
           ]
       },

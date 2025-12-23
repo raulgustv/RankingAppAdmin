@@ -29,7 +29,7 @@ const PlayerForm = () => {
     }
 
     setLoading(false)
-    toast.success(`${data?.player?.name} ha sido creado/a`)
+    toast.success(`${data?.player?.name} has been added to the ranking`)
     form.resetFields();
   }
 

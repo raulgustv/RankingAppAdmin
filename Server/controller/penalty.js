@@ -3,6 +3,7 @@
     import Penalty, { penaltyReasons } from "../models/penalty.js";
     import Player from "../models/player.js";
     import { normalizeRankings } from "../utils/normalizeRanking.js";
+import player from "../models/player.js";
 
 
     export const addPenalty = async(req, res) =>{
@@ -94,7 +95,7 @@
         }
 
         
-    }
+    } 
 
     export const addSuspension = async(req, res) =>{
         const {idPlayer} = req.params;
@@ -153,15 +154,12 @@
     export const removeSuspension = async(req,res) =>{
 
         const {idPlayer} = req.params;
-        const {message} = req.body;
 
          if(!mongoose.Types.ObjectId.isValid(idPlayer)){
             return res.status(400).json({
                 error: 'Id del jugador no es válido'
             })
         }
-
-        if(!message) return res.status(400).json({error: 'Mensaje requerido'})
 
         try {
 
@@ -180,24 +178,11 @@
             
             const newRank =  highestRankedPlayer && highestRankedPlayer.ranking
                 ? highestRankedPlayer.ranking + 1
-                : 1;            
-
-            
-
-            const defaultSuspensionLevel = 0
-
-            player.suspensionLevel = defaultSuspensionLevel
-            player.suspensionMessage = message
-
+                : 1;      
+                
             player.active = true
             player.suspended = false
             player.ranking = newRank
-
-            player.suspendedNotes.push({
-                message,
-                level: defaultSuspensionLevel,
-                date: new Date()
-            });
 
             await player.save();
 
@@ -214,4 +199,22 @@
         }
 
         
+    }
+
+    export const getPenalties = async(req, res) =>{
+        try {
+
+            const {idPlayer} = req.params;
+
+            const penalty = await Penalty.find({player: idPlayer})
+                                    .populate("player", "name lastName")
+                                    .populate("issuedBy", "name lastName")
+
+            return res.status(200).json(penalty)
+        } catch (error) {
+            console.log(error)
+            return res.status(500).json({
+                error: "Unable to obtain penalty data"
+            })
+        }
     }

@@ -10,8 +10,9 @@ const PlayersTable = () => {
     const {players, fetchPlayers} = usePlayers()
     const [internalLevel, setInternalLevel] = useState(false);
 
-    const toggleLevel = () => {
+    const toggleLevel = async() => {
         setInternalLevel(prev => !prev);
+        await fetchPlayers()
     };
 
  
